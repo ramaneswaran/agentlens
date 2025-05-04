@@ -1,0 +1,329 @@
+// src/utils/dataProcessing.js
+import Papa from 'papaparse';
+import _ from 'lodash';
+
+/**
+ * Load and parse CSV data from a file
+ * @param {String} filePath - The path to the CSV file
+ * @returns {Promise<Array>} - Parsed data as an array of objects
+ */
+export const loadCSVData = async (filePath) => {
+  try {
+    // Use fetch API instead of fs
+    const response = await fetch(filePath);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${filePath}: ${response.statusText}`);
+    }
+    
+    const fileContent = await response.text();
+    
+    return new Promise((resolve, reject) => {
+      Papa.parse(fileContent, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.errors.length > 0) {
+            console.warn('CSV parsing had errors:', results.errors);
+          }
+          resolve(results.data);
+        },
+        error: (error) => reject(error)
+      });
+    });
+  } catch (error) {
+    console.error('Error loading CSV data:', error);
+    throw error;
+  }
+};
+
+/**
+ * Extract unique tools from the dataset
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Array of unique tool names
+ */
+export const extractUniqueTools = (data) => {
+  return _.uniq(data.map(row => row.tool_name)).filter(Boolean).sort();
+};
+
+/**
+ * Extract unique use cases (subdirectories) from the dataset
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Array of unique subdirectory names
+ */
+export const extractUniqueUseCases = (data) => {
+  return _.uniq(data.map(row => row.subdir)).filter(Boolean).sort();
+};
+
+/**
+ * Calculate summary statistics for a tool
+ * @param {Array} data - The parsed CSV data
+ * @param {String} toolName - The name of the tool
+ * @returns {Object} - Summary statistics
+ */
+export const calculateToolStats = (data, toolName) => {
+  const toolData = data.filter(row => row.tool_name === toolName);
+  
+  return {
+    name: toolName,
+    count: toolData.length,
+    avgDuration: _.meanBy(toolData, 'duration'),
+    errorRate: _.filter(toolData, 'has_error').length / toolData.length,
+    avgTokens: _.meanBy(toolData, 'token_count'),
+    stepDistribution: _.countBy(toolData, 'step'),
+    useCases: _.uniq(toolData.map(row => row.subdir)).length
+  };
+};
+
+/**
+ * Get all tool summary statistics
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Array of tool statistics objects
+ */
+export const getAllToolStats = (data) => {
+  const tools = extractUniqueTools(data);
+  return tools.map(tool => calculateToolStats(data, tool));
+};
+
+/**
+ * Filter data for a specific tool
+ * @param {Array} data - The parsed CSV data
+ * @param {String} toolName - The name of the tool
+ * @returns {Array} - Filtered data for the specified tool
+ */
+export const getToolData = (data, toolName) => {
+  return data.filter(row => row.tool_name === toolName);
+};
+
+/**
+ * Prepare data for error count vs time step line chart
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Processed data for the line chart
+ */
+export const prepareErrorByStepData = (data) => {
+  const tools = extractUniqueTools(data);
+  const maxStep = _.max(data.map(d => d.step)) || 10;
+  
+  // Initialize the result structure with all steps
+  const result = _.range(1, maxStep + 1).map(step => {
+    const stepObj = { step };
+    tools.forEach(tool => {
+      stepObj[tool] = 0;
+    });
+    return stepObj;
+  });
+  
+  // Count errors by tool and step
+  data.forEach(row => {
+    if (row.has_error && row.step && row.tool_name) {
+      const stepIndex = row.step - 1;
+      if (stepIndex >= 0 && stepIndex < result.length) {
+        result[stepIndex][row.tool_name] = (result[stepIndex][row.tool_name] || 0) + 1;
+      }
+    }
+  });
+  
+  return result;
+};
+
+/**
+ * Prepare data for duration vs token count scatter plot
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Processed data for the scatter plot
+ */
+export const prepareDurationVsTokenData = (data) => {
+  return data.map(row => ({
+    tool: row.tool_name,
+    duration: row.duration,
+    tokenCount: row.token_count,
+    step: row.step,
+    hasError: row.has_error,
+    useCase: row.subdir
+  })).filter(item => 
+    item.duration !== undefined && 
+    item.tokenCount !== undefined && 
+    item.tool !== undefined
+  );
+};
+
+/**
+ * Prepare data for runtime distribution (success vs error)
+ * @param {Array} data - The parsed CSV data
+ * @returns {Object} - Processed data for box plots or histograms
+ */
+export const prepareRuntimeDistributionData = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    const toolData = data.filter(row => row.tool_name === tool);
+    const successRuntimes = toolData
+      .filter(row => !row.has_error)
+      .map(row => row.duration);
+    
+    const errorRuntimes = toolData
+      .filter(row => row.has_error)
+      .map(row => row.duration);
+    
+    return {
+      tool,
+      success: {
+        runtimes: successRuntimes,
+        count: successRuntimes.length,
+        avg: _.mean(successRuntimes) || 0,
+        min: _.min(successRuntimes) || 0,
+        max: _.max(successRuntimes) || 0,
+      },
+      error: {
+        runtimes: errorRuntimes,
+        count: errorRuntimes.length,
+        avg: _.mean(errorRuntimes) || 0,
+        min: _.min(errorRuntimes) || 0,
+        max: _.max(errorRuntimes) || 0,
+      }
+    };
+  });
+};
+
+/**
+ * Prepare data for Sankey chart (tool transitions)
+ * @param {Array} data - The parsed CSV data
+ * @returns {Object} - Processed data for Sankey diagram
+ */
+export const prepareSankeyData = (data) => {
+  const toolSet = new Set();
+  const nodeIndexMap = new Map(); // maps "tool @ step" => node index
+  const nodes = [];
+  const links = [];
+  let nodeId = 0;
+
+  // Group data by subdir
+  const groupedByUseCase = {};
+  data.forEach(row => {
+    if (!row.subdir || !row.tool_name || row.step === undefined) return;
+
+    toolSet.add(row.tool_name);
+
+    if (!groupedByUseCase[row.subdir]) {
+      groupedByUseCase[row.subdir] = [];
+    }
+    groupedByUseCase[row.subdir].push(row);
+  });
+
+  Object.entries(groupedByUseCase).forEach(([subdir, rows]) => {
+    // Steps used by this subdir
+    const steps = [...new Set(rows.map(r => r.step))].sort((a, b) => a - b);
+    const stepMap = {};
+    steps.forEach(step => {
+      stepMap[step] = [...new Set(rows.filter(r => r.step === step).map(r => r.tool_name))];
+    });
+
+    const stepCount = steps.length;
+
+    // Add nodes and links
+    steps.forEach((step, i) => {
+      const normalizedX = i / (stepCount - 1 || 1);  // avoid divide by 0
+
+      stepMap[step].forEach(tool => {
+        const key = `${tool} @ Step ${step}`;
+        if (!nodeIndexMap.has(key)) {
+          nodeIndexMap.set(key, nodeId);
+          nodes.push({ name: key, tool, step, x: normalizedX });
+          nodeId++;
+        }
+      });
+
+      if (i < steps.length - 1) {
+        const fromStep = step;
+        const toStep = steps[i + 1];
+
+        stepMap[fromStep].forEach(fromTool => {
+          stepMap[toStep].forEach(toTool => {
+            const source = nodeIndexMap.get(`${fromTool} @ Step ${fromStep}`);
+            const target = nodeIndexMap.get(`${toTool} @ Step ${toStep}`);
+            if (source != null && target != null) {
+              const existing = links.find(l => l.source === source && l.target === target);
+              if (existing) {
+                existing.value += 1;
+              } else {
+                links.push({ source, target, value: 1 });
+              }
+            }
+          });
+        });
+      }
+    });
+  });
+
+  // Assign colors to tools
+  const colors = [
+    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+    "#911eb4", "#42d4f4", "#f032e6", "#bfef45", "#fabebe",
+    "#469990", "#dcbeff", "#9A6324", "#800000", "#aaffc3",
+    "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#000000"
+  ];
+  const toolList = Array.from(toolSet).sort();
+  const toolColors = {};
+  toolList.forEach((tool, i) => {
+    toolColors[tool] = colors[i % colors.length];
+  });
+
+  const nodeX = nodes.map(n => n.x);
+
+  console.log("✔ Per-path x positions:");
+  nodes.forEach(n => console.log(`[${n.name}] x: ${n.x.toFixed(2)}`));
+
+  return {
+    nodes,
+    links,
+    toolColors,
+    stepCount: Math.max(...nodes.map(n => n.step)),
+    nodeX
+  };
+};
+
+
+
+/**
+ * Prepare tool performance metrics for visualization
+ * @param {Array} data - The parsed CSV data
+ * @param {String} toolName - The name of the tool (optional)
+ * @returns {Object} - Various metrics for the specified tool or all tools
+ */
+export const prepareToolMetrics = (data, toolName = null) => {
+  const filteredData = toolName 
+    ? data.filter(row => row.tool_name === toolName)
+    : data;
+
+  const byStep = _.groupBy(filteredData, 'step');
+  const stepMetrics = {};
+  
+  Object.entries(byStep).forEach(([step, rows]) => {
+    const toolCounts = _.countBy(rows, 'tool_name');
+    const totalCount = rows.length;
+    const avgDuration = _.meanBy(rows, 'duration');
+    const errorCount = _.filter(rows, 'has_error').length;
+    
+    stepMetrics[step] = {
+      toolDistribution: Object.entries(toolCounts).map(([tool, count]) => ({
+        tool,
+        count,
+        percentage: (count / totalCount) * 100
+      })),
+      avgDuration,
+      errorRate: errorCount / totalCount,
+      avgTokens: _.meanBy(rows, 'token_count'),
+      avgTimePerToken: _.meanBy(rows, 'time_per_token')
+    };
+  });
+  
+  return {
+    stepMetrics,
+    overallErrorRate: _.filter(filteredData, 'has_error').length / filteredData.length,
+    avgDuration: _.meanBy(filteredData, 'duration'),
+    avgTokens: _.meanBy(filteredData, 'token_count'),
+    tokenDistribution: {
+      completion: _.meanBy(filteredData, 'completion_tokens'),
+      prompt: _.meanBy(filteredData, 'prompt_tokens')
+    }
+  };
+};
