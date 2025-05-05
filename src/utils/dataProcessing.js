@@ -312,7 +312,9 @@ export const prepareToolMetrics = (data, toolName = null) => {
       avgDuration,
       errorRate: errorCount / totalCount,
       avgTokens: _.meanBy(rows, 'token_count'),
-      avgTimePerToken: _.meanBy(rows, 'time_per_token')
+      avgTimePerToken: _.meanBy(rows, row => {
+        return row.duration / (row.token_count || 1);  // Avoid division by zero
+      })
     };
   });
   
@@ -323,7 +325,90 @@ export const prepareToolMetrics = (data, toolName = null) => {
     avgTokens: _.meanBy(filteredData, 'token_count'),
     tokenDistribution: {
       completion: _.meanBy(filteredData, 'completion_tokens'),
-      prompt: _.meanBy(filteredData, 'prompt_tokens')
+      prompt: _.meanBy(filteredData, 'prompt_tokens'),
+      cached_tokens_pct: _.meanBy(filteredData, 'cached_tokens_pct')
     }
   };
+};
+
+/**
+ * Prepare data for token metrics visualization
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Processed data for token metrics
+ */
+export const prepareTokenMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    return {
+      tool,
+      avgDuration: _.meanBy(toolData, 'duration') || 0,
+      promptTokens: _.meanBy(toolData, 'prompt_tokens') || 0,
+      completionTokens: _.meanBy(toolData, 'completion_tokens') || 0,
+      totalTokens: _.meanBy(toolData, 'total_tokens') || 0,
+      cachedTokensPct: _.meanBy(toolData, 'cached_tokens_pct') || 0,
+      cachedTokens: _.meanBy(toolData, row => 
+        (row.total_tokens || 0) * (row.cached_tokens_pct || 0)
+      ) || 0
+    };
+  });
+};
+
+
+/**
+ * Calculate simple token metrics for each tool
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} Array of token metrics objects by tool
+ */
+export const calculateSimpleTokenMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    // Get data for this tool
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    if (toolData.length === 0) {
+      return { tool, prompt: 0, completion: 0, total: 0 };
+    }
+    
+    // Calculate averages with safe fallbacks
+    const avgPrompt = toolData.reduce((sum, row) => sum + (Number(row.prompt_tokens) || 0), 0) / toolData.length;
+    const avgCompletion = toolData.reduce((sum, row) => sum + (Number(row.completion_tokens) || 0), 0) / toolData.length;
+    const avgTotal = toolData.reduce((sum, row) => sum + (Number(row.token_count) || 0), 0) / toolData.length;
+    
+    return {
+      tool,
+      prompt: Math.round(avgPrompt),
+      completion: Math.round(avgCompletion),
+      total: Math.round(avgTotal)
+    };
+  });
+};
+
+/**
+ * Calculate simple duration metrics for each tool
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} Array of duration metrics objects by tool
+ */
+export const calculateSimpleDurationMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    // Get data for this tool
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    if (toolData.length === 0) {
+      return { tool, duration: 0 };
+    }
+    
+    // Calculate average duration with safe fallback
+    const avgDuration = toolData.reduce((sum, row) => sum + (Number(row.duration) || 0), 0) / toolData.length;
+    
+    return {
+      tool,
+      duration: parseFloat(avgDuration.toFixed(2))
+    };
+  });
 };

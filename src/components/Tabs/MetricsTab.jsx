@@ -1,23 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   loadCSVData,
   extractUniqueTools,
   prepareErrorByStepData,
   prepareDurationVsTokenData,
-  prepareRuntimeDistributionData,
-  prepareToolMetrics
+  prepareRuntimeDistributionData
 } from '../../utils/dataProcessing';
-import { Button, Form, Badge } from 'react-bootstrap';
+import { Button, Form, Badge, Card, Row, Col } from 'react-bootstrap';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ScatterChart, Scatter,
-  BarChart, Bar,
-  ComposedChart
+  BarChart, Bar
 } from 'recharts';
 
+// Consistent color mapping for tools
 const COLORS = [
   '#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#00C49F',
-  '#FF6B6B', '#FFBB28', '#A28EFF', '#FF9F9F', '#00B2CA'
+  '#FF6B6B', '#FFBB28', '#A28EFF', '#FF9F9F', '#00B2CA',
+  '#4B0082', '#006400', '#8B0000', '#FF1493', '#00BFFF'
 ];
 
 const MetricsTab = () => {
@@ -27,19 +27,30 @@ const MetricsTab = () => {
   const [errorData, setErrorData] = useState([]);
   const [scatterData, setScatterData] = useState([]);
   const [runtimeData, setRuntimeData] = useState([]);
-  const [tokenMetrics, setTokenMetrics] = useState([]);
+  const [tokenData, setTokenData] = useState([]);
+  const [durationData, setDurationData] = useState([]);
+  
+  // Create a consistent color mapping for all tools
+  const toolColorMap = useMemo(() => {
+    const colorMap = {};
+    availableTools.forEach((tool, index) => {
+      colorMap[tool] = COLORS[index % COLORS.length];
+    });
+    return colorMap;
+  }, [availableTools]);
 
   useEffect(() => {
     loadCSVData('/agent_metrics.csv').then(parsed => {
       const tools = extractUniqueTools(parsed);
       setData(parsed);
       setAvailableTools(tools);
-      setSelectedTools(tools); // ✅ select all tools by default
+      setSelectedTools(tools.slice(0, 5)); // ✅ select first 5 tools by default for better performance
     });
   }, []);
 
   useEffect(() => {
     if (data.length && selectedTools.length) {
+      // Prepare error data
       const errData = prepareErrorByStepData(data).map(row => {
         const filtered = { step: row.step };
         selectedTools.forEach(tool => {
@@ -49,27 +60,47 @@ const MetricsTab = () => {
       });
       setErrorData(errData);
 
+      // Prepare scatter data
       const scatter = prepareDurationVsTokenData(data).filter(d =>
         selectedTools.includes(d.tool)
       );
       setScatterData(scatter);
 
+      // Prepare runtime data
       const runtime = prepareRuntimeDistributionData(data).filter(d =>
         selectedTools.includes(d.tool)
       );
       setRuntimeData(runtime);
 
-      const tokens = selectedTools.map(tool => {
-        const detail = prepareToolMetrics(data, tool);
-        return {
+      // Simple token data - separate chart for tokens and duration
+      const tokenMetrics = [];
+      const durationMetrics = [];
+      
+      selectedTools.forEach(tool => {
+        const toolData = data.filter(row => row.tool_name === tool);
+        
+        // Get average values with fallbacks to 0
+        const promptTokens = toolData.reduce((sum, row) => sum + (row.prompt_tokens || 0), 0) / toolData.length || 0;
+        const completionTokens = toolData.reduce((sum, row) => sum + (row.completion_tokens || 0), 0) / toolData.length || 0;
+        const duration = toolData.reduce((sum, row) => sum + (row.duration || 0), 0) / toolData.length || 0;
+        
+        // Simpler approach - one object for tokens
+        tokenMetrics.push({
           tool,
-          totalTokens: detail.avgTokens,
-          prompt: detail.tokenDistribution.prompt,
-          completion: detail.tokenDistribution.completion,
-          timePerToken: Object.values(detail.stepMetrics).reduce((acc, val) => acc + val.avgTimePerToken, 0) / Object.keys(detail.stepMetrics).length
-        };
+          prompt: Math.round(promptTokens),
+          completion: Math.round(completionTokens),
+          total: Math.round(promptTokens + completionTokens)
+        });
+        
+        // Separate object for duration
+        durationMetrics.push({
+          tool,
+          duration: parseFloat(duration.toFixed(2))
+        });
       });
-      setTokenMetrics(tokens);
+      
+      setTokenData(tokenMetrics);
+      setDurationData(durationMetrics);
     }
   }, [data, selectedTools]);
 
@@ -90,17 +121,31 @@ const MetricsTab = () => {
       <Form.Select onChange={handleAddTool} value="">
         <option value="">Select tool...</option>
         {availableTools.map(tool => (
-          <option key={tool} value={tool}>{tool}</option>
+          <option 
+            key={tool} 
+            value={tool}
+            style={{ 
+              backgroundColor: toolColorMap[tool] ? `${toolColorMap[tool]}22` : undefined,
+              borderLeft: toolColorMap[tool] ? `4px solid ${toolColorMap[tool]}` : undefined
+            }}
+          >
+            {tool}
+          </option>
         ))}
       </Form.Select>
 
       <div className="mt-3 mb-4">
-        {selectedTools.map((tool, idx) => (
+        {selectedTools.map((tool) => (
           <Badge
             key={tool}
-            bg="secondary"
             className="me-2 mb-2"
-            style={{ fontSize: '1rem', padding: '0.5rem 0.75rem' }}
+            style={{ 
+              fontSize: '1rem', 
+              padding: '0.5rem 0.75rem', 
+              backgroundColor: toolColorMap[tool] || '#6c757d',
+              color: '#fff',
+              borderRadius: '16px'
+            }}
           >
             {tool}
             <Button
@@ -108,6 +153,16 @@ const MetricsTab = () => {
               variant="light"
               onClick={() => removeTool(tool)}
               className="ms-2 py-0 px-2"
+              style={{ 
+                borderRadius: '50%',
+                width: '20px',
+                height: '20px',
+                padding: '0',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginLeft: '8px'
+              }}
             >
               ✕
             </Button>
@@ -121,18 +176,28 @@ const MetricsTab = () => {
           <h6>Error Count by Step</h6>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-              <LineChart data={errorData}>
+              <LineChart 
+                data={errorData}
+                margin={{ top: 20, right: 30, left: 50, bottom: 30 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="step" />
-                <YAxis />
+                <XAxis 
+                  dataKey="step" 
+                  label={{ value: 'Step Number', position: 'insideBottomRight', offset: -10 }} 
+                  padding={{ left: 20, right: 20 }}
+                />
+                <YAxis 
+                  label={{ value: 'Error Count', angle: -90, position: 'insideLeft', dx: -20 }}
+                  padding={{ top: 20, bottom: 20 }}
+                />
                 <Tooltip />
                 <Legend />
-                {selectedTools.map((tool, idx) => (
+                {selectedTools.map((tool) => (
                   <Line
                     key={tool}
                     type="monotone"
                     dataKey={tool}
-                    stroke={COLORS[idx % COLORS.length]}
+                    stroke={toolColorMap[tool] || COLORS[0]}
                     dot={{ r: 2 }}
                   />
                 ))}
@@ -148,18 +213,32 @@ const MetricsTab = () => {
           <h6 className="mt-5">Duration vs Token Count</h6>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-              <ScatterChart>
+              <ScatterChart
+                margin={{ top: 20, right: 30, left: 50, bottom: 30 }}
+              >
                 <CartesianGrid />
-                <XAxis type="number" dataKey="tokenCount" name="Token Count" />
-                <YAxis type="number" dataKey="duration" name="Duration (s)" />
+                <XAxis 
+                  type="number" 
+                  dataKey="tokenCount" 
+                  name="Token Count" 
+                  label={{ value: 'Token Count', position: 'insideBottomRight', offset: -10 }} 
+                  padding={{ left: 20, right: 20 }}
+                />
+                <YAxis 
+                  type="number" 
+                  dataKey="duration" 
+                  name="Duration (s)" 
+                  label={{ value: 'Duration (s)', angle: -90, position: 'insideLeft', dx: -20 }} 
+                  padding={{ top: 20, bottom: 20 }}
+                />
                 <Tooltip />
                 <Legend />
-                {selectedTools.map((tool, idx) => (
+                {selectedTools.map((tool) => (
                   <Scatter
                     key={tool}
                     name={tool}
                     data={scatterData.filter(d => d.tool === tool)}
-                    fill={COLORS[idx % COLORS.length]}
+                    fill={toolColorMap[tool] || COLORS[0]}
                   />
                 ))}
               </ScatterChart>
@@ -174,10 +253,35 @@ const MetricsTab = () => {
           <h6 className="mt-5">Runtime Distribution (Success vs Error)</h6>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-              <BarChart data={runtimeData} layout="vertical">
+              <BarChart 
+                data={runtimeData} 
+                layout="vertical"
+                margin={{ top: 20, right: 30, left: 50, bottom: 30 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="tool" type="category" />
+                <XAxis 
+                  type="number" 
+                  label={{ value: 'Average Runtime (s)', position: 'insideBottomRight', offset: -10 }} 
+                  padding={{ left: 0, right: 20 }}
+                />
+                <YAxis 
+                  dataKey="tool" 
+                  type="category" 
+                  label={{ value: 'Tool', angle: -90, position: 'insideLeft', dx: -30 }} 
+                  width={120}
+                  tick={(props) => {
+                    const { x, y, payload } = props;
+                    const tool = payload.value;
+                    return (
+                      <g transform={`translate(${x},${y})`}>
+                        <rect x={-48} y={-8} width={4} height={16} fill={toolColorMap[tool] || '#666'} />
+                        <text x={-40} y={4} textAnchor="start" fill="#666" fontSize={11}>
+                          {tool}
+                        </text>
+                      </g>
+                    );
+                  }}
+                />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="success.avg" fill="#00C49F" name="Success" />
@@ -188,28 +292,99 @@ const MetricsTab = () => {
         </>
       )}
 
-      {/* Chart 4: Token Metrics by Tool */}
-      {tokenMetrics.length > 0 && (
-        <>
-          <h6 className="mt-5">Token Metrics by Tool</h6>
-          <div style={{ width: '100%', height: 350 }}>
-            <ResponsiveContainer>
-              <ComposedChart data={tokenMetrics}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="tool" />
-                <YAxis yAxisId="left" />
-                <YAxis yAxisId="right" orientation="right" />
-                <Tooltip />
-                <Legend />
-                <Bar yAxisId="left" dataKey="totalTokens" name="Avg Total Tokens" fill="#3399FF" />
-                <Bar yAxisId="left" dataKey="prompt" name="Avg Prompt Tokens" fill="#FF4444" />
-                <Bar yAxisId="left" dataKey="completion" name="Avg Completion Tokens" fill="#FFA500" />
-                <Line yAxisId="right" type="monotone" dataKey="timePerToken" stroke="#00C49F" name="Time per Token (ms)" />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </>
-      )}
+      {/* SIMPLIFIED APPROACH - Separate charts for tokens and duration */}
+      <Row className="mt-5">
+        <Col md={6}>
+          <Card className="h-100">
+            <Card.Header>
+              <h6 className="mb-0">Token Distribution by Tool</h6>
+            </Card.Header>
+            <Card.Body>
+              {tokenData.length > 0 && (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={tokenData}
+                    margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="tool" 
+                      label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
+                      tick={(props) => {
+                        const { x, y, payload } = props;
+                        const tool = payload.value;
+                        return (
+                          <g transform={`translate(${x},${y})`}>
+                            <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
+                              {tool}
+                            </text>
+                            <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
+                          </g>
+                        );
+                      }}
+                      height={60}
+                    />
+                    <YAxis 
+                      label={{ value: 'Token Count', angle: -90, position: 'insideLeft', dx: -20 }}
+                    />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="prompt" name="Prompt Tokens" stackId="a" fill="#FF4444" />
+                    <Bar dataKey="completion" name="Completion Tokens" stackId="a" fill="#FFA500" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+        
+        <Col md={6}>
+          <Card className="h-100">
+            <Card.Header>
+              <h6 className="mb-0">Average Duration by Tool</h6>
+            </Card.Header>
+            <Card.Body>
+              {durationData.length > 0 && (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={durationData}
+                    margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="tool" 
+                      label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
+                      tick={(props) => {
+                        const { x, y, payload } = props;
+                        const tool = payload.value;
+                        return (
+                          <g transform={`translate(${x},${y})`}>
+                            <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
+                              {tool}
+                            </text>
+                            <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
+                          </g>
+                        );
+                      }}
+                      height={60}
+                    />
+                    <YAxis 
+                      label={{ value: 'Duration (s)', angle: -90, position: 'insideLeft', dx: -20 }}
+                    />
+                    <Tooltip />
+                    <Legend />
+                    <Bar 
+                      dataKey="duration" 
+                      name="Average Duration (s)" 
+                      fill={(data) => toolColorMap[data && data.tool] || "#00C49F"}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 };
