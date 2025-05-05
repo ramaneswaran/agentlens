@@ -189,7 +189,6 @@ function ToolFlowTab() {
     <Card className="p-4">
       <h5 className="mb-3">Tool Flow Sankey</h5>
 
-      {/* APPROACH 1: Custom Badge Component */}
       <div className="mb-4">
         <h6 className="text-muted mb-2">Tool Legend:</h6>
         {uniqueTools.map(tool => (
@@ -199,58 +198,6 @@ function ToolFlowTab() {
         ))}
       </div>
 
-      {/* APPROACH 2: Direct DOM element with enforced styling */}
-      {/*
-      <div className="mb-4">
-        <h6 className="text-muted mb-2">Tool Legend (Alternative):</h6>
-        {uniqueTools.map(tool => (
-          <span 
-            key={tool}
-            style={{
-              backgroundColor: toolColors[tool] || '#888',
-              color: 'white',
-              borderRadius: '50px',
-              padding: '6px 12px',
-              margin: '0 4px 8px 0',
-              display: 'inline-block',
-              fontSize: '0.9rem',
-              fontWeight: '500'
-            }}
-          >
-            {tool}
-          </span>
-        ))}
-      </div>
-      */}
-
-      {/* APPROACH 3: Using the className directly for more control */}
-      {/*
-      <div className="mb-4">
-        <h6 className="text-muted mb-2">Tool Legend (CSS Classes):</h6>
-        <style>
-          {uniqueTools.map((tool, index) => (`
-            .tool-badge-${index} {
-              background-color: ${toolColors[tool]} !important;
-              color: white !important;
-            }
-          `)).join('\n')}
-        </style>
-        
-        {uniqueTools.map((tool, index) => (
-          <Badge 
-            key={tool}
-            pill
-            className={`tool-badge-${index} me-2 mb-2`}
-            style={{
-              fontSize: '0.9rem',
-              padding: '0.4rem 0.7rem'
-            }}
-          >
-            {tool}
-          </Badge>
-        ))}
-      </div>
-      */}
 
       <div style={{ width: '100%', height: 700 }}>
         <Plot
