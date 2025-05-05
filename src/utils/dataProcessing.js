@@ -189,12 +189,13 @@ export const prepareRuntimeDistributionData = (data) => {
 };
 
 /**
- * Prepare data for Sankey chart (tool transitions)
+ * Prepare data for Sankey chart (tool transitions) with error information
  * @param {Array} data - The parsed CSV data
  * @param {Object} existingColorMap - Optional color map to ensure consistency
+ * @param {String} viewMode - View mode: "all" or "errors"
  * @returns {Object} - Processed data for Sankey diagram
  */
-export const prepareSankeyData = (data, existingColorMap = null) => {
+export const prepareSankeyData = (data, existingColorMap = null, viewMode = "all") => {
   const toolSet = new Set();
   const nodeIndexMap = new Map(); // maps "tool @ step" => node index
   const nodes = [];
@@ -229,10 +230,35 @@ export const prepareSankeyData = (data, existingColorMap = null) => {
       const normalizedX = i / (stepCount - 1 || 1);  // avoid divide by 0
 
       stepMap[step].forEach(tool => {
+        // Calculate error statistics for this tool at this step
+        const toolStepRows = rows.filter(r => 
+          r.step === step && r.tool_name === tool
+        );
+        
+        const errorRows = toolStepRows.filter(r => r.has_error);
+        const hasErrors = errorRows.length > 0;
+        const errorRate = toolStepRows.length > 0 
+          ? errorRows.length / toolStepRows.length 
+          : 0;
+        
+        // Skip this node if we're in error view mode and it has no errors
+        if (viewMode === "errors" && !hasErrors) {
+          return;
+        }
+
         const key = `${tool} @ Step ${step}`;
         if (!nodeIndexMap.has(key)) {
           nodeIndexMap.set(key, nodeId);
-          nodes.push({ name: key, tool, step, x: normalizedX });
+          nodes.push({ 
+            name: key, 
+            tool, 
+            step, 
+            x: normalizedX,
+            hasErrors,
+            errorCount: errorRows.length,
+            totalCount: toolStepRows.length,
+            errorRate
+          });
           nodeId++;
         }
       });
@@ -242,15 +268,51 @@ export const prepareSankeyData = (data, existingColorMap = null) => {
         const toStep = steps[i + 1];
 
         stepMap[fromStep].forEach(fromTool => {
+          // Skip if from-node doesn't exist (filtered out in error view)
+          const fromKey = `${fromTool} @ Step ${fromStep}`;
+          if (!nodeIndexMap.has(fromKey)) return;
+          
           stepMap[toStep].forEach(toTool => {
-            const source = nodeIndexMap.get(`${fromTool} @ Step ${fromStep}`);
-            const target = nodeIndexMap.get(`${toTool} @ Step ${toStep}`);
+            // Skip if to-node doesn't exist (filtered out in error view)
+            const toKey = `${toTool} @ Step ${toStep}`;
+            if (!nodeIndexMap.has(toKey)) return;
+            
+            // Count normal and error transitions
+            const source = nodeIndexMap.get(fromKey);
+            const target = nodeIndexMap.get(toKey);
+            
             if (source != null && target != null) {
-              const existing = links.find(l => l.source === source && l.target === target);
-              if (existing) {
-                existing.value += 1;
-              } else {
-                links.push({ source, target, value: 1 });
+              // Count transitions and error transitions
+              const transitions = rows.filter(r => {
+                return r.step === fromStep && r.tool_name === fromTool &&
+                       rows.some(next => 
+                         next.subdir === r.subdir && 
+                         next.step === toStep && 
+                         next.tool_name === toTool
+                       );
+              });
+              
+              const errorTransitions = transitions.filter(r => r.has_error);
+              const hasErrors = errorTransitions.length > 0;
+              
+              // Skip links with no errors if in error view mode
+              if (viewMode === "errors" && !hasErrors) return;
+              
+              if (transitions.length > 0) {
+                const existing = links.find(l => l.source === source && l.target === target);
+                if (existing) {
+                  existing.value += transitions.length;
+                  existing.errorCount = (existing.errorCount || 0) + errorTransitions.length;
+                  existing.hasErrors = existing.hasErrors || hasErrors;
+                } else {
+                  links.push({ 
+                    source, 
+                    target, 
+                    value: transitions.length,
+                    errorCount: errorTransitions.length,
+                    hasErrors
+                  });
+                }
               }
             }
           });
@@ -288,7 +350,8 @@ export const prepareSankeyData = (data, existingColorMap = null) => {
     links,
     toolColors,
     stepCount: Math.max(...nodes.map(n => n.step || 0), 1),
-    nodeX
+    nodeX,
+    viewMode
   };
 };
 
