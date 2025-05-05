@@ -116,8 +116,18 @@ function ToolFlowTab() {
       groupedByUseCase[row.subdir].push(row);
     });
 
+
+
     // Identify all unique steps across all use cases
     const allSteps = [...new Set(data.filter(row => row.step !== undefined).map(row => row.step))].sort((a, b) => a - b);
+
+    // Step 2: Calculate max step per subdir (use case)
+    const useCaseMaxStep = {};
+    Object.entries(groupedByUseCase).forEach(([subdir, rows]) => {
+      const maxStep = Math.max(...rows.map(r => r.step));
+      useCaseMaxStep[subdir] = maxStep;
+    });
+    
     
     // Create error nodes map - just one per step transition
     const errorNodeIds = new Map(); // "step1-step2" -> nodeId for error node
@@ -409,19 +419,25 @@ function ToolFlowTab() {
 
   const { nodes, links, toolColors, stepCount, nodeX } = sankeyData;
 
-  // Create customdata arrays for hover information
-  const nodeCustomdata = nodes.map(n => ({ 
-    tool: n.tool, 
-    step: n.step,
-    hasErrors: n.hasErrors,
-    errorCount: n.errorCount,
-    totalCount: n.totalCount,
-    errorRate: n.errorRate,
-    isErrorNode: n.isErrorNode,
-    fromStep: n.fromStep,
-    toStep: n.toStep,
-    isTerminal: n.isTerminal
-  }));
+  const nodeCustomdata = nodes.map(n => {
+    let hovertext = "";
+  
+    if (n.isErrorNode) {
+      if (n.isTerminal) {
+        hovertext = `⚠️ Terminal errors at Step ${n.fromStep}<br>Error Count: ${n.errorCount}`;
+      } else {
+        hovertext = `⚠️ Error between Step ${n.fromStep} → ${n.toStep}<br>Error Count: ${n.errorCount}`;
+      }
+    } else {
+      hovertext = `Tool: ${n.tool}<br>Step: ${n.step}<br>Total Calls: ${n.totalCount}`;
+      if (n.hasErrors && viewMode === "errors") {
+        hovertext += `<br><b style='color:red'>Errors: ${n.errorCount}</b><br>Error Rate: ${(n.errorRate * 100).toFixed(1)}%`;
+      }
+    }
+  
+    return { hovertext };
+  });
+  
   
   // Use normal node labels with special formatting for error nodes
   const nodeLabels = nodes.map(n => {
@@ -450,30 +466,20 @@ function ToolFlowTab() {
     const sourceNode = nodes[l.source];
     const targetNode = nodes[l.target];
     return {
-      sourceLabel: sourceNode.name,
-      targetLabel: targetNode.name,
-      sourceTool: sourceNode.tool,
-      targetTool: targetNode.tool,
-      sourceStep: sourceNode.step,
-      targetStep: targetNode.step,
-      isErrorLink: l.isErrorLink,
-      count: l.value
+      hovertext: `<b>${l.isErrorLink ? "Error Flow" : "Flow"}</b><br>` +
+                 `From: <b>${sourceNode.tool}</b><br>` +
+                 `To: <b>${targetNode.tool}</b><br>` +
+                 `Count: ${l.value}`
     };
   });
   
-  // Create node hover template
-  const nodeHoverTemplate = '<b>%{label}</b><br>' +
-    '%{customdata.isErrorNode ? (customdata.isTerminal ? "Terminal errors at Step " + customdata.fromStep + "<br>Error Count: " + customdata.errorCount : "Between Step " + customdata.fromStep + " and Step " + customdata.toStep + "<br>Error Count: " + customdata.errorCount) : "Step " + customdata.step}' +
-    '%{customdata.isErrorNode ? "" : "<br>Total Calls: " + customdata.totalCount}' +
-    '%{customdata.hasErrors && !customdata.isErrorNode && customdata.viewMode === "errors" ? "<br><b style=\'color:red\'>Errors: " + customdata.errorCount + "</b><br>Error Rate: " + (customdata.errorRate * 100).toFixed(1) + "%" : ""}' +
-    '<extra></extra>';
   
+  // Create node hover template
+  const nodeHoverTemplate = '%{customdata.hovertext}<extra></extra>';
+
   // Create link hover template
-  const linkHoverTemplate = '<b>%{customdata.isErrorLink ? "Error Flow" : "Flow"}</b><br>' +
-    'From: <b>%{customdata.sourceTool}</b><br>' +
-    'To: <b>%{customdata.targetTool}</b><br>' +
-    'Count: %{customdata.count}' +
-    '<extra></extra>';
+  const linkHoverTemplate = '%{customdata.hovertext}<extra></extra>';
+
 
   return (
     <Card className="p-4">
