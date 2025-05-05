@@ -71,7 +71,10 @@ export const calculateToolStats = (data, toolName) => {
     errorRate: _.filter(toolData, 'has_error').length / toolData.length,
     avgTokens: _.meanBy(toolData, 'token_count'),
     stepDistribution: _.countBy(toolData, 'step'),
-    useCases: _.uniq(toolData.map(row => row.subdir)).length
+    useCases: _.uniq(toolData.map(row => row.subdir)).length,
+    // Add token breakdown for visualizations
+    promptTokens: _.meanBy(toolData, 'prompt_tokens') || 0,
+    completionTokens: _.meanBy(toolData, 'completion_tokens') || 0
   };
 };
 
@@ -84,6 +87,7 @@ export const getAllToolStats = (data) => {
   const tools = extractUniqueTools(data);
   return tools.map(tool => calculateToolStats(data, tool));
 };
+
 
 /**
  * Filter data for a specific tool
@@ -187,9 +191,10 @@ export const prepareRuntimeDistributionData = (data) => {
 /**
  * Prepare data for Sankey chart (tool transitions)
  * @param {Array} data - The parsed CSV data
+ * @param {Object} existingColorMap - Optional color map to ensure consistency
  * @returns {Object} - Processed data for Sankey diagram
  */
-export const prepareSankeyData = (data) => {
+export const prepareSankeyData = (data, existingColorMap = null) => {
   const toolSet = new Set();
   const nodeIndexMap = new Map(); // maps "tool @ step" => node index
   const nodes = [];
@@ -255,28 +260,34 @@ export const prepareSankeyData = (data) => {
   });
 
   // Assign colors to tools
-  const colors = [
-    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-    "#911eb4", "#42d4f4", "#f032e6", "#bfef45", "#fabebe",
-    "#469990", "#dcbeff", "#9A6324", "#800000", "#aaffc3",
-    "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#000000"
-  ];
-  const toolList = Array.from(toolSet).sort();
-  const toolColors = {};
-  toolList.forEach((tool, i) => {
-    toolColors[tool] = colors[i % colors.length];
-  });
+  let toolColors;
+  
+  if (existingColorMap) {
+    // Use the provided color map for consistency
+    toolColors = existingColorMap;
+  } else {
+    // Use default colors if no color map is provided
+    const colors = [
+      "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+      "#911eb4", "#42d4f4", "#f032e6", "#bfef45", "#fabebe",
+      "#469990", "#dcbeff", "#9A6324", "#800000", "#aaffc3",
+      "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#000000"
+    ];
+    
+    const toolList = Array.from(toolSet).sort();
+    toolColors = {};
+    toolList.forEach((tool, i) => {
+      toolColors[tool] = colors[i % colors.length];
+    });
+  }
 
   const nodeX = nodes.map(n => n.x);
-
-  console.log("✔ Per-path x positions:");
-  nodes.forEach(n => console.log(`[${n.name}] x: ${n.x.toFixed(2)}`));
 
   return {
     nodes,
     links,
     toolColors,
-    stepCount: Math.max(...nodes.map(n => n.step)),
+    stepCount: Math.max(...nodes.map(n => n.step || 0), 1),
     nodeX
   };
 };
@@ -312,7 +323,9 @@ export const prepareToolMetrics = (data, toolName = null) => {
       avgDuration,
       errorRate: errorCount / totalCount,
       avgTokens: _.meanBy(rows, 'token_count'),
-      avgTimePerToken: _.meanBy(rows, 'time_per_token')
+      avgTimePerToken: _.meanBy(rows, row => {
+        return row.duration / (row.token_count || 1);  // Avoid division by zero
+      })
     };
   });
   
@@ -323,7 +336,90 @@ export const prepareToolMetrics = (data, toolName = null) => {
     avgTokens: _.meanBy(filteredData, 'token_count'),
     tokenDistribution: {
       completion: _.meanBy(filteredData, 'completion_tokens'),
-      prompt: _.meanBy(filteredData, 'prompt_tokens')
+      prompt: _.meanBy(filteredData, 'prompt_tokens'),
+      cached_tokens_pct: _.meanBy(filteredData, 'cached_tokens_pct')
     }
   };
+};
+
+/**
+ * Prepare data for token metrics visualization
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} - Processed data for token metrics
+ */
+export const prepareTokenMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    return {
+      tool,
+      avgDuration: _.meanBy(toolData, 'duration') || 0,
+      promptTokens: _.meanBy(toolData, 'prompt_tokens') || 0,
+      completionTokens: _.meanBy(toolData, 'completion_tokens') || 0,
+      totalTokens: _.meanBy(toolData, 'total_tokens') || 0,
+      cachedTokensPct: _.meanBy(toolData, 'cached_tokens_pct') || 0,
+      cachedTokens: _.meanBy(toolData, row => 
+        (row.total_tokens || 0) * (row.cached_tokens_pct || 0)
+      ) || 0
+    };
+  });
+};
+
+
+/**
+ * Calculate simple token metrics for each tool
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} Array of token metrics objects by tool
+ */
+export const calculateSimpleTokenMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    // Get data for this tool
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    if (toolData.length === 0) {
+      return { tool, prompt: 0, completion: 0, total: 0 };
+    }
+    
+    // Calculate averages with safe fallbacks
+    const avgPrompt = toolData.reduce((sum, row) => sum + (Number(row.prompt_tokens) || 0), 0) / toolData.length;
+    const avgCompletion = toolData.reduce((sum, row) => sum + (Number(row.completion_tokens) || 0), 0) / toolData.length;
+    const avgTotal = toolData.reduce((sum, row) => sum + (Number(row.token_count) || 0), 0) / toolData.length;
+    
+    return {
+      tool,
+      prompt: Math.round(avgPrompt),
+      completion: Math.round(avgCompletion),
+      total: Math.round(avgTotal)
+    };
+  });
+};
+
+/**
+ * Calculate simple duration metrics for each tool
+ * @param {Array} data - The parsed CSV data
+ * @returns {Array} Array of duration metrics objects by tool
+ */
+export const calculateSimpleDurationMetrics = (data) => {
+  const tools = extractUniqueTools(data);
+  
+  return tools.map(tool => {
+    // Get data for this tool
+    const toolData = data.filter(row => row.tool_name === tool);
+    
+    if (toolData.length === 0) {
+      return { tool, duration: 0 };
+    }
+    
+    // Calculate average duration with safe fallback
+    const avgDuration = toolData.reduce((sum, row) => sum + (Number(row.duration) || 0), 0) / toolData.length;
+    
+    return {
+      tool,
+      duration: parseFloat(avgDuration.toFixed(2))
+    };
+  });
 };

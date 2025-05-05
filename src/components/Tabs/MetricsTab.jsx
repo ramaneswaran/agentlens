@@ -1,24 +1,69 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   loadCSVData,
   extractUniqueTools,
   prepareErrorByStepData,
-  prepareDurationVsTokenData,
-  prepareRuntimeDistributionData,
-  prepareToolMetrics
+  prepareDurationVsTokenData
 } from '../../utils/dataProcessing';
-import { Button, Form, Badge } from 'react-bootstrap';
+import {
+  prepareBoxplotDataForPlotly,
+  prepareHeatmapDataForPlotly
+} from '../../utils/plotlyHelpers';
+import { Button, Form, Card, Row, Col } from 'react-bootstrap';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  ScatterChart, Scatter,
-  BarChart, Bar,
-  ComposedChart
+  ScatterChart, Scatter, BarChart, Bar, 
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
 } from 'recharts';
+import Plot from 'react-plotly.js';
 
-const COLORS = [
-  '#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#00C49F',
-  '#FF6B6B', '#FFBB28', '#A28EFF', '#FF9F9F', '#00B2CA'
+const EXTENDED_COLORS = [
+  "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+  "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
+  "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000",
+  "#aaffc3", "#808000", "#ffd8b1", "#000075", "#808080"
 ];
+
+// Custom Badge component to ensure styling is applied consistently
+const ColoredBadge = ({ color, children, onRemove }) => (
+  <span 
+    className="badge rounded-pill" 
+    style={{ 
+      backgroundColor: color, 
+      color: "#fff",
+      fontSize: '1rem', 
+      padding: '0.5rem 0.75rem', 
+      margin: '0.25rem',
+      display: 'inline-block',
+      fontWeight: '500'
+    }}
+  >
+    {children}
+    {onRemove && (
+      <button
+        onClick={onRemove}
+        style={{ 
+          backgroundColor: 'rgba(255, 255, 255, 0.3)',
+          border: 'none',
+          borderRadius: '50%',
+          width: '20px',
+          height: '20px',
+          padding: '0',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginLeft: '8px',
+          cursor: 'pointer',
+          fontSize: '0.875rem',
+          fontWeight: 'bold',
+          color: 'white'
+        }}
+      >
+        ✕
+      </button>
+    )}
+  </span>
+);
 
 const MetricsTab = () => {
   const [data, setData] = useState([]);
@@ -26,20 +71,66 @@ const MetricsTab = () => {
   const [selectedTools, setSelectedTools] = useState([]);
   const [errorData, setErrorData] = useState([]);
   const [scatterData, setScatterData] = useState([]);
-  const [runtimeData, setRuntimeData] = useState([]);
-  const [tokenMetrics, setTokenMetrics] = useState([]);
+  const [boxplotData, setBoxplotData] = useState({ data: [], layout: {} });
+  const [heatmapData, setHeatmapData] = useState({ data: [], layout: {} });
+  const [radarData, setRadarData] = useState([]);
+  const [tokenData, setTokenData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Create a consistent color mapping for all tools
+  const toolColorMap = useMemo(() => {
+    const colorMap = {};
+    availableTools.forEach((tool, index) => {
+      colorMap[tool] = EXTENDED_COLORS[index % EXTENDED_COLORS.length];
+    });
+    return colorMap;
+  }, [availableTools]);
+
+  // Prepare radar chart data
+  const prepareRadarData = (data) => {
+    return selectedTools.map(tool => {
+      const toolData = data.filter(row => row.tool_name === tool);
+      
+      if (toolData.length === 0) {
+        return {
+          subject: tool,
+          'Avg Duration (s)': 0,
+          'Avg Token Count': 0,
+          'Error Rate (%)': 0
+        };
+      }
+      
+      const avgDuration = toolData.reduce((sum, row) => sum + (row.duration || 0), 0) / toolData.length;
+      const avgTokens = toolData.reduce((sum, row) => sum + (row.token_count || 0), 0) / toolData.length;
+      const errorRate = toolData.filter(row => row.has_error).length / toolData.length;
+      
+      return {
+        subject: tool,
+        'Avg Duration (s)': parseFloat(avgDuration.toFixed(2)),
+        'Avg Token Count': Math.round(avgTokens),
+        'Error Rate (%)': parseFloat((errorRate * 100).toFixed(1))
+      };
+    });
+  };
 
   useEffect(() => {
+    setIsLoading(true);
     loadCSVData('/agent_metrics.csv').then(parsed => {
       const tools = extractUniqueTools(parsed);
       setData(parsed);
       setAvailableTools(tools);
-      setSelectedTools(tools); // ✅ select all tools by default
+      setSelectedTools(tools.slice(0, 5)); // Select first 5 tools by default
+      setIsLoading(false);
+    })
+    .catch(error => {
+      console.error("Error loading data:", error);
+      setIsLoading(false);
     });
   }, []);
 
   useEffect(() => {
     if (data.length && selectedTools.length) {
+      // Prepare error data
       const errData = prepareErrorByStepData(data).map(row => {
         const filtered = { step: row.step };
         selectedTools.forEach(tool => {
@@ -49,27 +140,43 @@ const MetricsTab = () => {
       });
       setErrorData(errData);
 
+      // Prepare scatter data
       const scatter = prepareDurationVsTokenData(data).filter(d =>
         selectedTools.includes(d.tool)
       );
       setScatterData(scatter);
 
-      const runtime = prepareRuntimeDistributionData(data).filter(d =>
-        selectedTools.includes(d.tool)
-      );
-      setRuntimeData(runtime);
+      // Prepare boxplot data with Plotly format
+      const boxplot = prepareBoxplotDataForPlotly(data, selectedTools);
+      setBoxplotData(boxplot);
 
-      const tokens = selectedTools.map(tool => {
-        const detail = prepareToolMetrics(data, tool);
-        return {
+      // Prepare heatmap data with Plotly format
+      const heatmap = prepareHeatmapDataForPlotly(data, selectedTools);
+      setHeatmapData(heatmap);
+
+      // Prepare radar chart data
+      const radar = prepareRadarData(data);
+      setRadarData(radar);
+
+      // Simple token data
+      const tokenMetrics = [];
+      
+      selectedTools.forEach(tool => {
+        const toolData = data.filter(row => row.tool_name === tool);
+        
+        // Get average values with fallbacks to 0
+        const promptTokens = toolData.reduce((sum, row) => sum + (row.prompt_tokens || 0), 0) / toolData.length || 0;
+        const completionTokens = toolData.reduce((sum, row) => sum + (row.completion_tokens || 0), 0) / toolData.length || 0;
+        
+        tokenMetrics.push({
           tool,
-          totalTokens: detail.avgTokens,
-          prompt: detail.tokenDistribution.prompt,
-          completion: detail.tokenDistribution.completion,
-          timePerToken: Object.values(detail.stepMetrics).reduce((acc, val) => acc + val.avgTimePerToken, 0) / Object.keys(detail.stepMetrics).length
-        };
+          prompt: Math.round(promptTokens),
+          completion: Math.round(completionTokens),
+          total: Math.round(promptTokens + completionTokens)
+        });
       });
-      setTokenMetrics(tokens);
+      
+      setTokenData(tokenMetrics);
     }
   }, [data, selectedTools]);
 
@@ -77,6 +184,7 @@ const MetricsTab = () => {
     const tool = e.target.value;
     if (tool && !selectedTools.includes(tool)) {
       setSelectedTools([...selectedTools, tool]);
+      e.target.value = ""; // Reset the dropdown after selection
     }
   };
 
@@ -84,55 +192,84 @@ const MetricsTab = () => {
     setSelectedTools(selectedTools.filter(t => t !== toolToRemove));
   };
 
+  if (isLoading) {
+    return <div className="p-4">Loading metrics data...</div>;
+  }
+
   return (
     <div className="p-4">
       <h5>Tool Selection</h5>
-      <Form.Select onChange={handleAddTool} value="">
-        <option value="">Select tool...</option>
-        {availableTools.map(tool => (
-          <option key={tool} value={tool}>{tool}</option>
-        ))}
+      
+      <Form.Select 
+        onChange={handleAddTool} 
+        value=""
+        className="mb-3"
+      >
+        <option value="">Select tool to add...</option>
+        {availableTools
+          .filter(tool => !selectedTools.includes(tool))
+          .map(tool => (
+            <option 
+              key={tool} 
+              value={tool}
+              style={{ 
+                backgroundColor: toolColorMap[tool] ? `${toolColorMap[tool]}22` : undefined,
+                borderLeft: toolColorMap[tool] ? `4px solid ${toolColorMap[tool]}` : undefined,
+                padding: '8px',
+                fontWeight: '500'
+              }}
+            >
+              {tool}
+            </option>
+          ))
+        }
       </Form.Select>
 
-      <div className="mt-3 mb-4">
-        {selectedTools.map((tool, idx) => (
-          <Badge
-            key={tool}
-            bg="secondary"
-            className="me-2 mb-2"
-            style={{ fontSize: '1rem', padding: '0.5rem 0.75rem' }}
-          >
-            {tool}
-            <Button
-              size="sm"
-              variant="light"
-              onClick={() => removeTool(tool)}
-              className="ms-2 py-0 px-2"
+      <div className="mb-4">
+        <h6 className="text-muted mb-2">Selected Tools:</h6>
+        {selectedTools.length === 0 ? (
+          <p className="fst-italic text-muted">No tools selected. Please select tools from the dropdown above.</p>
+        ) : (
+          selectedTools.map((tool) => (
+            <ColoredBadge 
+              key={tool}
+              color={toolColorMap[tool] || '#6c757d'}
+              onRemove={() => removeTool(tool)}
             >
-              ✕
-            </Button>
-          </Badge>
-        ))}
+              {tool}
+            </ColoredBadge>
+          ))
+        )}
       </div>
 
       {/* Chart 1: Error Count by Step */}
-      {errorData.length > 0 && (
+      {errorData.length > 0 && selectedTools.length > 0 && (
         <>
           <h6>Error Count by Step</h6>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-              <LineChart data={errorData}>
+              <LineChart 
+                data={errorData}
+                margin={{ top: 20, right: 30, left: 50, bottom: 30 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="step" />
-                <YAxis />
+                <XAxis 
+                  dataKey="step" 
+                  label={{ value: 'Step Number', position: 'insideBottomRight', offset: -10 }} 
+                  padding={{ left: 20, right: 20 }}
+                />
+                <YAxis 
+                  label={{ value: 'Error Count', angle: -90, position: 'insideLeft', dx: -20 }}
+                  padding={{ top: 20, bottom: 20 }}
+                />
                 <Tooltip />
                 <Legend />
-                {selectedTools.map((tool, idx) => (
+                {selectedTools.map((tool) => (
                   <Line
                     key={tool}
                     type="monotone"
                     dataKey={tool}
-                    stroke={COLORS[idx % COLORS.length]}
+                    stroke={toolColorMap[tool] || EXTENDED_COLORS[0]}
                     dot={{ r: 2 }}
                   />
                 ))}
@@ -143,23 +280,37 @@ const MetricsTab = () => {
       )}
 
       {/* Chart 2: Duration vs Token Count */}
-      {scatterData.length > 0 && (
+      {scatterData.length > 0 && selectedTools.length > 0 && (
         <>
           <h6 className="mt-5">Duration vs Token Count</h6>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-              <ScatterChart>
+              <ScatterChart
+                margin={{ top: 20, right: 30, left: 50, bottom: 30 }}
+              >
                 <CartesianGrid />
-                <XAxis type="number" dataKey="tokenCount" name="Token Count" />
-                <YAxis type="number" dataKey="duration" name="Duration (s)" />
+                <XAxis 
+                  type="number" 
+                  dataKey="tokenCount" 
+                  name="Token Count" 
+                  label={{ value: 'Token Count', position: 'insideBottomRight', offset: -10 }} 
+                  padding={{ left: 20, right: 20 }}
+                />
+                <YAxis 
+                  type="number" 
+                  dataKey="duration" 
+                  name="Duration (s)" 
+                  label={{ value: 'Duration (s)', angle: -90, position: 'insideLeft', dx: -20 }} 
+                  padding={{ top: 20, bottom: 20 }}
+                />
                 <Tooltip />
                 <Legend />
-                {selectedTools.map((tool, idx) => (
+                {selectedTools.map((tool) => (
                   <Scatter
                     key={tool}
                     name={tool}
                     data={scatterData.filter(d => d.tool === tool)}
-                    fill={COLORS[idx % COLORS.length]}
+                    fill={toolColorMap[tool] || EXTENDED_COLORS[0]}
                   />
                 ))}
               </ScatterChart>
@@ -168,47 +319,88 @@ const MetricsTab = () => {
         </>
       )}
 
-      {/* Chart 3: Runtime Distribution */}
-      {runtimeData.length > 0 && (
+      {/* NEW CHART: Proper Boxplot with Plotly */}
+      {boxplotData.data.length > 0 && selectedTools.length > 0 && (
         <>
-          <h6 className="mt-5">Runtime Distribution (Success vs Error)</h6>
-          <div style={{ width: '100%', height: 300 }}>
-            <ResponsiveContainer>
-              <BarChart data={runtimeData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="tool" type="category" />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="success.avg" fill="#00C49F" name="Success" />
-                <Bar dataKey="error.avg" fill="#FF6B6B" name="Error" />
-              </BarChart>
-            </ResponsiveContainer>
+          <h6 className="mt-5">Runtime Distribution Boxplots</h6>
+          <div className="border rounded p-2 bg-light">
+            <Plot
+              data={boxplotData.data}
+              layout={boxplotData.layout}
+              config={{ responsive: true }}
+              style={{ width: '100%', height: 450 }}
+            />
           </div>
         </>
       )}
 
-      {/* Chart 4: Token Metrics by Tool */}
-      {tokenMetrics.length > 0 && (
+      {/* NEW CHART: Proper Heatmap with Plotly */}
+      {heatmapData.data.length > 0 && selectedTools.length > 0 && (
         <>
-          <h6 className="mt-5">Token Metrics by Tool</h6>
-          <div style={{ width: '100%', height: 350 }}>
-            <ResponsiveContainer>
-              <ComposedChart data={tokenMetrics}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="tool" />
-                <YAxis yAxisId="left" />
-                <YAxis yAxisId="right" orientation="right" />
-                <Tooltip />
-                <Legend />
-                <Bar yAxisId="left" dataKey="totalTokens" name="Avg Total Tokens" fill="#3399FF" />
-                <Bar yAxisId="left" dataKey="prompt" name="Avg Prompt Tokens" fill="#FF4444" />
-                <Bar yAxisId="left" dataKey="completion" name="Avg Completion Tokens" fill="#FFA500" />
-                <Line yAxisId="right" type="monotone" dataKey="timePerToken" stroke="#00C49F" name="Time per Token (ms)" />
-              </ComposedChart>
-            </ResponsiveContainer>
+          <h6 className="mt-5">Duration Heatmap (Tool × Step)</h6>
+          <div className="border rounded p-2 bg-light">
+            <Plot
+              data={heatmapData.data}
+              layout={heatmapData.layout}
+              config={{ responsive: true }}
+              style={{ width: '100%', height: 450 }}
+            />
           </div>
         </>
+      )}
+
+      {/* Token Distribution */}
+      {selectedTools.length > 0 && (
+        <div className="mt-5">
+          <Card className="h-100">
+            <Card.Header>
+              <h6 className="mb-0">Token Distribution by Tool</h6>
+            </Card.Header>
+            <Card.Body>
+              {tokenData.length > 0 && (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={tokenData}
+                    margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="tool" 
+                      label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
+                      tick={(props) => {
+                        const { x, y, payload } = props;
+                        const tool = payload.value;
+                        return (
+                          <g transform={`translate(${x},${y})`}>
+                            <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
+                              {tool}
+                            </text>
+                            <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
+                          </g>
+                        );
+                      }}
+                      height={60}
+                    />
+                    <YAxis 
+                      label={{ value: 'Token Count', angle: -90, position: 'insideLeft', dx: -20 }}
+                    />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="prompt" name="Prompt Tokens" stackId="a" fill="#FF4444" />
+                    <Bar dataKey="completion" name="Completion Tokens" stackId="a" fill="#FFA500" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Card.Body>
+          </Card>
+        </div>
+      )}
+      
+      {selectedTools.length === 0 && (
+        <div className="mt-5 p-4 text-center bg-light rounded">
+          <h5>No Tools Selected</h5>
+          <p>Please select tools from the dropdown above to view metrics.</p>
+        </div>
       )}
     </div>
   );
