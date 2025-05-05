@@ -71,7 +71,10 @@ export const calculateToolStats = (data, toolName) => {
     errorRate: _.filter(toolData, 'has_error').length / toolData.length,
     avgTokens: _.meanBy(toolData, 'token_count'),
     stepDistribution: _.countBy(toolData, 'step'),
-    useCases: _.uniq(toolData.map(row => row.subdir)).length
+    useCases: _.uniq(toolData.map(row => row.subdir)).length,
+    // Add token breakdown for visualizations
+    promptTokens: _.meanBy(toolData, 'prompt_tokens') || 0,
+    completionTokens: _.meanBy(toolData, 'completion_tokens') || 0
   };
 };
 
@@ -84,6 +87,7 @@ export const getAllToolStats = (data) => {
   const tools = extractUniqueTools(data);
   return tools.map(tool => calculateToolStats(data, tool));
 };
+
 
 /**
  * Filter data for a specific tool

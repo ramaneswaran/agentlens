@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import SparklineBar from '../SparklineBar';
 import { useNavigate } from 'react-router-dom';
+import _ from 'lodash';
 
 // Color mapping for tools (consistent with other tabs)
 const TOOL_COLORS = [
@@ -55,14 +56,10 @@ const MetricPill = ({ label, value, unit, color }) => (
 const MiniTokenChart = ({ data, toolColor }) => {
   if (!data) return null;
   
-  // Calculate synthetic token data based on avgTokens if tokenDistribution not available
-  // This ensures we have some visualization even if the specific prompt/completion breakdown isn't available
-  const promptTokens = Math.max(30, Math.round(data.avgTokens * 0.4)); // Estimate: 40% of tokens are prompt
-  const completionTokens = Math.max(15, Math.round(data.avgTokens * 0.6)); // Estimate: 60% are completion
-  
+  // Use the actual prompt and completion token data
   const chartData = [
-    { name: 'Prompt', value: promptTokens },
-    { name: 'Completion', value: completionTokens }
+    { name: 'Prompt', value: Math.round(data.promptTokens || 0) },
+    { name: 'Completion', value: Math.round(data.completionTokens || 0) }
   ];
   
   // Use the tool color with different opacities for the bars
@@ -129,19 +126,17 @@ const MiniErrorChart = ({ errorRate, toolColor }) => {
 
 // Mini bar chart for duration distribution visualization
 const MiniDurationChart = ({ data, toolColor }) => {
-  if (!data || !data.stepDistribution) return null;
+  if (!data || !data.avgDuration) return null;
   
-  // Create a simulated duration distribution based on step distribution
-  // This simulates having different durations for different steps
-  const baseDuration = data.avgDuration || 100;
-  const variance = baseDuration * 0.5; // 50% variance for visualization
+  // Create a realistic duration distribution based on the average
+  const avgDuration = data.avgDuration;
   
-  // Create duration buckets to show distribution
+  // Create duration buckets to show distribution - FASTER means LESS time
   const durationBuckets = [
-    { name: 'Fast', value: Math.max(10, baseDuration * 0.5) },
-    { name: 'Avg', value: baseDuration },
-    { name: 'Slow', value: baseDuration * 1.5 },
-    { name: 'Max', value: baseDuration * 2 }
+    { name: 'Fast', value: avgDuration * 0.5, percent: '50%' },
+    { name: 'Avg', value: avgDuration, percent: '100%' },
+    { name: 'Slow', value: avgDuration * 1.5, percent: '150%' },
+    { name: 'Max', value: avgDuration * 2, percent: '200%' }
   ];
   
   return (
@@ -151,12 +146,14 @@ const MiniDurationChart = ({ data, toolColor }) => {
           <XAxis dataKey="name" fontSize={10} />
           <YAxis hide />
           <Tooltip 
-            formatter={(value) => [`${value.toFixed(2)} ms`, 'Duration']}
+            formatter={(value, name, props) => {
+              return [`${value.toFixed(1)} ms (${props.payload.percent})`];
+            }}
+            labelFormatter={(label) => `${label} Duration`}
           />
           <Bar 
             dataKey="value" 
             fill={toolColor}
-            background={{ fill: '#eee' }}
             radius={[4, 4, 0, 0]}
           />
         </BarChart>
