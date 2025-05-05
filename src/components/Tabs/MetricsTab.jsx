@@ -6,19 +6,60 @@ import {
   prepareDurationVsTokenData,
   prepareRuntimeDistributionData
 } from '../../utils/dataProcessing';
-import { Button, Form, Badge, Card, Row, Col } from 'react-bootstrap';
+import { Button, Form, Card, Row, Col } from 'react-bootstrap';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ScatterChart, Scatter,
   BarChart, Bar
 } from 'recharts';
 
-// Consistent color mapping for tools
-const COLORS = [
-  '#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#00C49F',
-  '#FF6B6B', '#FFBB28', '#A28EFF', '#FF9F9F', '#00B2CA',
-  '#4B0082', '#006400', '#8B0000', '#FF1493', '#00BFFF'
+const EXTENDED_COLORS = [
+  "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+  "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
+  "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000",
+  "#aaffc3", "#808000", "#ffd8b1", "#000075", "#808080"
 ];
+
+// Custom Badge component to ensure styling is applied consistently
+const ColoredBadge = ({ color, children, onRemove }) => (
+  <span 
+    className="badge rounded-pill" 
+    style={{ 
+      backgroundColor: color, 
+      color: "#fff",
+      fontSize: '1rem', 
+      padding: '0.5rem 0.75rem', 
+      margin: '0.25rem',
+      display: 'inline-block',
+      fontWeight: '500'
+    }}
+  >
+    {children}
+    {onRemove && (
+      <button
+        onClick={onRemove}
+        style={{ 
+          backgroundColor: 'rgba(255, 255, 255, 0.3)',
+          border: 'none',
+          borderRadius: '50%',
+          width: '20px',
+          height: '20px',
+          padding: '0',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginLeft: '8px',
+          cursor: 'pointer',
+          fontSize: '0.875rem',
+          fontWeight: 'bold',
+          color: 'white'
+        }}
+      >
+        ✕
+      </button>
+    )}
+  </span>
+);
 
 const MetricsTab = () => {
   const [data, setData] = useState([]);
@@ -29,22 +70,29 @@ const MetricsTab = () => {
   const [runtimeData, setRuntimeData] = useState([]);
   const [tokenData, setTokenData] = useState([]);
   const [durationData, setDurationData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   // Create a consistent color mapping for all tools
   const toolColorMap = useMemo(() => {
     const colorMap = {};
     availableTools.forEach((tool, index) => {
-      colorMap[tool] = COLORS[index % COLORS.length];
+      colorMap[tool] = EXTENDED_COLORS[index % EXTENDED_COLORS.length];
     });
     return colorMap;
   }, [availableTools]);
 
   useEffect(() => {
+    setIsLoading(true);
     loadCSVData('/agent_metrics.csv').then(parsed => {
       const tools = extractUniqueTools(parsed);
       setData(parsed);
       setAvailableTools(tools);
       setSelectedTools(tools.slice(0, 5)); // ✅ select first 5 tools by default for better performance
+      setIsLoading(false);
+    })
+    .catch(error => {
+      console.error("Error loading data:", error);
+      setIsLoading(false);
     });
   }, []);
 
@@ -108,6 +156,7 @@ const MetricsTab = () => {
     const tool = e.target.value;
     if (tool && !selectedTools.includes(tool)) {
       setSelectedTools([...selectedTools, tool]);
+      e.target.value = ""; // Reset the dropdown after selection
     }
   };
 
@@ -115,63 +164,58 @@ const MetricsTab = () => {
     setSelectedTools(selectedTools.filter(t => t !== toolToRemove));
   };
 
+  if (isLoading) {
+    return <div className="p-4">Loading metrics data...</div>;
+  }
+
   return (
     <div className="p-4">
       <h5>Tool Selection</h5>
-      <Form.Select onChange={handleAddTool} value="">
-        <option value="">Select tool...</option>
-        {availableTools.map(tool => (
-          <option 
-            key={tool} 
-            value={tool}
-            style={{ 
-              backgroundColor: toolColorMap[tool] ? `${toolColorMap[tool]}22` : undefined,
-              borderLeft: toolColorMap[tool] ? `4px solid ${toolColorMap[tool]}` : undefined
-            }}
-          >
-            {tool}
-          </option>
-        ))}
-      </Form.Select>
-
-      <div className="mt-3 mb-4">
-        {selectedTools.map((tool) => (
-          <Badge
-            key={tool}
-            className="me-2 mb-2"
-            style={{ 
-              fontSize: '1rem', 
-              padding: '0.5rem 0.75rem', 
-              backgroundColor: toolColorMap[tool] || '#6c757d',
-              color: '#fff',
-              borderRadius: '16px'
-            }}
-          >
-            {tool}
-            <Button
-              size="sm"
-              variant="light"
-              onClick={() => removeTool(tool)}
-              className="ms-2 py-0 px-2"
+      
+      <Form.Select 
+        onChange={handleAddTool} 
+        value=""
+        className="mb-3"
+      >
+        <option value="">Select tool to add...</option>
+        {availableTools
+          .filter(tool => !selectedTools.includes(tool))
+          .map(tool => (
+            <option 
+              key={tool} 
+              value={tool}
               style={{ 
-                borderRadius: '50%',
-                width: '20px',
-                height: '20px',
-                padding: '0',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginLeft: '8px'
+                backgroundColor: toolColorMap[tool] ? `${toolColorMap[tool]}22` : undefined,
+                borderLeft: toolColorMap[tool] ? `4px solid ${toolColorMap[tool]}` : undefined,
+                padding: '8px',
+                fontWeight: '500'
               }}
             >
-              ✕
-            </Button>
-          </Badge>
-        ))}
+              {tool}
+            </option>
+          ))
+        }
+      </Form.Select>
+
+      <div className="mb-4">
+        <h6 className="text-muted mb-2">Selected Tools:</h6>
+        {selectedTools.length === 0 ? (
+          <p className="fst-italic text-muted">No tools selected. Please select tools from the dropdown above.</p>
+        ) : (
+          selectedTools.map((tool) => (
+            <ColoredBadge 
+              key={tool}
+              color={toolColorMap[tool] || '#6c757d'}
+              onRemove={() => removeTool(tool)}
+            >
+              {tool}
+            </ColoredBadge>
+          ))
+        )}
       </div>
 
       {/* Chart 1: Error Count by Step */}
-      {errorData.length > 0 && (
+      {errorData.length > 0 && selectedTools.length > 0 && (
         <>
           <h6>Error Count by Step</h6>
           <div style={{ width: '100%', height: 300 }}>
@@ -197,7 +241,7 @@ const MetricsTab = () => {
                     key={tool}
                     type="monotone"
                     dataKey={tool}
-                    stroke={toolColorMap[tool] || COLORS[0]}
+                    stroke={toolColorMap[tool] || EXTENDED_COLORS[0]}
                     dot={{ r: 2 }}
                   />
                 ))}
@@ -208,7 +252,7 @@ const MetricsTab = () => {
       )}
 
       {/* Chart 2: Duration vs Token Count */}
-      {scatterData.length > 0 && (
+      {scatterData.length > 0 && selectedTools.length > 0 && (
         <>
           <h6 className="mt-5">Duration vs Token Count</h6>
           <div style={{ width: '100%', height: 300 }}>
@@ -238,7 +282,7 @@ const MetricsTab = () => {
                     key={tool}
                     name={tool}
                     data={scatterData.filter(d => d.tool === tool)}
-                    fill={toolColorMap[tool] || COLORS[0]}
+                    fill={toolColorMap[tool] || EXTENDED_COLORS[0]}
                   />
                 ))}
               </ScatterChart>
@@ -248,7 +292,7 @@ const MetricsTab = () => {
       )}
 
       {/* Chart 3: Runtime Distribution */}
-      {runtimeData.length > 0 && (
+      {runtimeData.length > 0 && selectedTools.length > 0 && (
         <>
           <h6 className="mt-5">Runtime Distribution (Success vs Error)</h6>
           <div style={{ width: '100%', height: 300 }}>
@@ -293,98 +337,107 @@ const MetricsTab = () => {
       )}
 
       {/* SIMPLIFIED APPROACH - Separate charts for tokens and duration */}
-      <Row className="mt-5">
-        <Col md={6}>
-          <Card className="h-100">
-            <Card.Header>
-              <h6 className="mb-0">Token Distribution by Tool</h6>
-            </Card.Header>
-            <Card.Body>
-              {tokenData.length > 0 && (
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart
-                    data={tokenData}
-                    margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="tool" 
-                      label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
-                      tick={(props) => {
-                        const { x, y, payload } = props;
-                        const tool = payload.value;
-                        return (
-                          <g transform={`translate(${x},${y})`}>
-                            <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
-                              {tool}
-                            </text>
-                            <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
-                          </g>
-                        );
-                      }}
-                      height={60}
-                    />
-                    <YAxis 
-                      label={{ value: 'Token Count', angle: -90, position: 'insideLeft', dx: -20 }}
-                    />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="prompt" name="Prompt Tokens" stackId="a" fill="#FF4444" />
-                    <Bar dataKey="completion" name="Completion Tokens" stackId="a" fill="#FFA500" />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-        
-        <Col md={6}>
-          <Card className="h-100">
-            <Card.Header>
-              <h6 className="mb-0">Average Duration by Tool</h6>
-            </Card.Header>
-            <Card.Body>
-              {durationData.length > 0 && (
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart
-                    data={durationData}
-                    margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="tool" 
-                      label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
-                      tick={(props) => {
-                        const { x, y, payload } = props;
-                        const tool = payload.value;
-                        return (
-                          <g transform={`translate(${x},${y})`}>
-                            <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
-                              {tool}
-                            </text>
-                            <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
-                          </g>
-                        );
-                      }}
-                      height={60}
-                    />
-                    <YAxis 
-                      label={{ value: 'Duration (s)', angle: -90, position: 'insideLeft', dx: -20 }}
-                    />
-                    <Tooltip />
-                    <Legend />
-                    <Bar 
-                      dataKey="duration" 
-                      name="Average Duration (s)" 
-                      fill={(data) => toolColorMap[data && data.tool] || "#00C49F"}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+      {selectedTools.length > 0 && (
+        <Row className="mt-5">
+          <Col md={6}>
+            <Card className="h-100">
+              <Card.Header>
+                <h6 className="mb-0">Token Distribution by Tool</h6>
+              </Card.Header>
+              <Card.Body>
+                {tokenData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart
+                      data={tokenData}
+                      margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="tool" 
+                        label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
+                        tick={(props) => {
+                          const { x, y, payload } = props;
+                          const tool = payload.value;
+                          return (
+                            <g transform={`translate(${x},${y})`}>
+                              <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
+                                {tool}
+                              </text>
+                              <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
+                            </g>
+                          );
+                        }}
+                        height={60}
+                      />
+                      <YAxis 
+                        label={{ value: 'Token Count', angle: -90, position: 'insideLeft', dx: -20 }}
+                      />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="prompt" name="Prompt Tokens" stackId="a" fill="#FF4444" />
+                      <Bar dataKey="completion" name="Completion Tokens" stackId="a" fill="#FFA500" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+          
+          <Col md={6}>
+            <Card className="h-100">
+              <Card.Header>
+                <h6 className="mb-0">Average Duration by Tool</h6>
+              </Card.Header>
+              <Card.Body>
+                {durationData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart
+                      data={durationData}
+                      margin={{ top: 20, right: 30, left: 50, bottom: 40 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="tool" 
+                        label={{ value: 'Tool', position: 'insideBottom', offset: 0, dy: 20 }}
+                        tick={(props) => {
+                          const { x, y, payload } = props;
+                          const tool = payload.value;
+                          return (
+                            <g transform={`translate(${x},${y})`}>
+                              <text x={0} y={10} textAnchor="middle" fill="#666" fontSize={10}>
+                                {tool}
+                              </text>
+                              <rect x={-10} y={15} width={20} height={4} fill={toolColorMap[tool] || '#666'} />
+                            </g>
+                          );
+                        }}
+                        height={60}
+                      />
+                      <YAxis 
+                        label={{ value: 'Duration (s)', angle: -90, position: 'insideLeft', dx: -20 }}
+                      />
+                      <Tooltip />
+                      <Legend />
+                      <Bar 
+                        dataKey="duration" 
+                        name="Average Duration (s)" 
+                        fill={(data) => toolColorMap[data && data.tool] || "#00C49F"}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+      )}
+      
+      {selectedTools.length === 0 && (
+        <div className="mt-5 p-4 text-center bg-light rounded">
+          <h5>No Tools Selected</h5>
+          <p>Please select tools from the dropdown above to view metrics.</p>
+        </div>
+      )}
     </div>
   );
 };

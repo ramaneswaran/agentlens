@@ -187,9 +187,10 @@ export const prepareRuntimeDistributionData = (data) => {
 /**
  * Prepare data for Sankey chart (tool transitions)
  * @param {Array} data - The parsed CSV data
+ * @param {Object} existingColorMap - Optional color map to ensure consistency
  * @returns {Object} - Processed data for Sankey diagram
  */
-export const prepareSankeyData = (data) => {
+export const prepareSankeyData = (data, existingColorMap = null) => {
   const toolSet = new Set();
   const nodeIndexMap = new Map(); // maps "tool @ step" => node index
   const nodes = [];
@@ -255,28 +256,34 @@ export const prepareSankeyData = (data) => {
   });
 
   // Assign colors to tools
-  const colors = [
-    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-    "#911eb4", "#42d4f4", "#f032e6", "#bfef45", "#fabebe",
-    "#469990", "#dcbeff", "#9A6324", "#800000", "#aaffc3",
-    "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#000000"
-  ];
-  const toolList = Array.from(toolSet).sort();
-  const toolColors = {};
-  toolList.forEach((tool, i) => {
-    toolColors[tool] = colors[i % colors.length];
-  });
+  let toolColors;
+  
+  if (existingColorMap) {
+    // Use the provided color map for consistency
+    toolColors = existingColorMap;
+  } else {
+    // Use default colors if no color map is provided
+    const colors = [
+      "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+      "#911eb4", "#42d4f4", "#f032e6", "#bfef45", "#fabebe",
+      "#469990", "#dcbeff", "#9A6324", "#800000", "#aaffc3",
+      "#808000", "#ffd8b1", "#000075", "#a9a9a9", "#000000"
+    ];
+    
+    const toolList = Array.from(toolSet).sort();
+    toolColors = {};
+    toolList.forEach((tool, i) => {
+      toolColors[tool] = colors[i % colors.length];
+    });
+  }
 
   const nodeX = nodes.map(n => n.x);
-
-  console.log("✔ Per-path x positions:");
-  nodes.forEach(n => console.log(`[${n.name}] x: ${n.x.toFixed(2)}`));
 
   return {
     nodes,
     links,
     toolColors,
-    stepCount: Math.max(...nodes.map(n => n.step)),
+    stepCount: Math.max(...nodes.map(n => n.step || 0), 1),
     nodeX
   };
 };
