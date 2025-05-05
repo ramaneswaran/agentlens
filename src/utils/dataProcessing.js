@@ -410,12 +410,4 @@ export const calculateSimpleDurationMetrics = (data) => {
       return { tool, duration: 0 };
     }
     
-    // Calculate average duration with safe fallback
-    const avgDuration = toolData.reduce((sum, row) => sum + (Number(row.duration) || 0), 0) / toolData.length;
-    
-    return {
-      tool,
-      duration: parseFloat(avgDuration.toFixed(2))
-    };
-  });
-};
+    // Calculate average duration with saf
