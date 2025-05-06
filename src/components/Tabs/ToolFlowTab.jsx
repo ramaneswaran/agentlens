@@ -528,9 +528,6 @@ function ToolFlowTab() {
               <ColoredBadge color={ERROR_NODE_COLOR}>
                 ⚠️ Error Node
               </ColoredBadge>
-              <ColoredBadge color={ERROR_NODE_COLOR}>
-                ⚠️ Terminal Errors
-              </ColoredBadge>
             </>
           )}
         </div>
@@ -548,6 +545,7 @@ function ToolFlowTab() {
                 pad: nodePadding,
                 thickness: nodeThickness,
                 x: nodeX,
+                align: 'left',
                 customdata: nodeCustomdata,
                 hovertemplate: nodeHoverTemplate
               },
