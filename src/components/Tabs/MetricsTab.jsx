@@ -716,7 +716,7 @@ const MetricsTab = () => {
         <div className="text-center p-5 bg-light rounded shadow-sm">
           <h5>No Tools Selected</h5>
           <p>Please select tools from the dropdown above to view the dashboard metrics.</p>
-          <Button variant="primary" onClick={() => setSelectedTools(availableTools.slice(0, 5))}>
+          <Button variant="primary" onClick={() => setSelectedTools(availableTools)}>
             Add Default Tools
           </Button>
         </div>
